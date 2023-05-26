@@ -5,6 +5,8 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IUniswapV2Pair } from "v2-core/interfaces/IUniswapV2Pair.sol";
 import { IUniswapV2Callee } from "v2-core/interfaces/IUniswapV2Callee.sol";
+import { ArbitragePracticeTest } from "../test/ArbitragePractice.sol";
+import { IUniswapV2Router01 } from "v2-periphery/interfaces/IUniswapV2Router01.sol";
 
 // This is a pracitce contract for flash swap arbitrage
 contract Arbitrage is IUniswapV2Callee, Ownable {
@@ -40,8 +42,12 @@ contract Arbitrage is IUniswapV2Callee, Ownable {
         require(amount0 > 0 || amount1 > 0, "amount0 or amount1 must be greater than 0");
 
         // 3. decode callback data
+        CallbackData memory callbackData = abi.decode(data, (CallbackData));
         // 4. swap WETH to USDC
+        IERC20(callbackData.borrowToken).transfer(callbackData.targetSwapPool, callbackData.borrowAmount);
+        IUniswapV2Pair(callbackData.targetSwapPool).swap(0, callbackData.debtAmountOut, address(this), "");
         // 5. repay USDC to lower price pool
+        IERC20(callbackData.debtToken).transfer(callbackData.borrowPool, callbackData.debtAmount);
     }
 
     // Method 1 is
@@ -55,10 +61,39 @@ contract Arbitrage is IUniswapV2Callee, Ownable {
     // for testing convenient, we implement the method 1 here
     function arbitrage(address priceLowerPool, address priceHigherPool, uint256 borrowETH) external {
         // 1. finish callbackData
+
+        address weth9 = IUniswapV2Pair(priceLowerPool).token0();
+        address usdc = IUniswapV2Pair(priceLowerPool).token1();
+        // token0 weth
+        // token1 usdc
+        ArbitragePracticeTest pt = ArbitragePracticeTest(msg.sender);
+
+        IUniswapV2Router01 uniswapV2Router = pt.uniswapV2Router();
+
+        address[] memory borrowPath = new address[](2);
+        borrowPath[0] = usdc;
+        borrowPath[1] = weth9;
+        uint256 debtAmount = uniswapV2Router.getAmountsIn(borrowETH, borrowPath)[0];
+        //445 781790
+        IUniswapV2Router01 sushiSwapV2Router = pt.sushiSwapV2Router();
+        address[] memory debtPath = new address[](2);
+        debtPath[0] = weth9;
+        debtPath[1] = usdc;
+        uint256 debtAmountOut = sushiSwapV2Router.getAmountsOut(borrowETH, debtPath)[1];
+        //543 966536
+        CallbackData memory callbackData;
+        callbackData.borrowPool = priceLowerPool;
+        callbackData.targetSwapPool = priceHigherPool;
+        callbackData.borrowToken = IUniswapV2Pair(priceLowerPool).token0(); // WETH9
+        callbackData.debtToken = IUniswapV2Pair(priceLowerPool).token1(); // USDC
+        callbackData.borrowAmount = borrowETH;
+        callbackData.debtAmount = debtAmount;
+        callbackData.debtAmountOut = debtAmountOut;
+
         // 2. flash swap (borrow WETH from lower price pool)
 
         // Uncomment next line when you do the homework
-        // IUniswapV2Pair(priceLowerPool).swap(borrowETH, 0, address(this), abi.encode(callbackData));
+        IUniswapV2Pair(priceLowerPool).swap(borrowETH, 0, address(this), abi.encode(callbackData));
     }
 
     //
